@@ -1,0 +1,39 @@
+# Render Blueprint — "New > Blueprint" in the Render dashboard reads this file.
+# Free web service (750 instance-hours/month is enough for ONE always-on service) + a MongoDB Atlas
+# free cluster (created separately; see docs/DEPLOYMENT.md). No card is needed for either.
+services:
+  - type: web
+    name: docucore
+    runtime: node
+    plan: free
+    # Pick the region closest to your Atlas cluster to keep database latency low.
+    region: oregon
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/server.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Paste your Atlas connection string in the dashboard (never commit it).
+      - key: MONGODB_URI
+        sync: false
+      # Render generates a strong random secret for you on first deploy.
+      - key: JWT_SECRET
+        generateValue: true
+      # Free Atlas M0 = 512 MB total (files + metadata), so keep the per-user quota modest.
+      - key: USER_QUOTA_MB
+        value: "25"
+      - key: MAX_FILE_SIZE_MB
+        value: "5"
+      # Optional: an administrator account and a public demo account (with sample documents).
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DEMO_EMAIL
+        value: demo@docucore.dev
+      - key: DEMO_PASSWORD
+        sync: false

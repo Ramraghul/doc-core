@@ -1,0 +1,894 @@
+openapi: 3.0.3
+info:
+  title: Docucore API
+  version: 1.0.0
+  description: |
+    **Docucore** is a secure, versioned document-management REST API.
+
+    ### Quick start (in this page)
+    1. `POST /auth/login` with the demo account (or `POST /auth/register` to create your own).
+    2. Copy the `token` from the response, click **Authorize** (top right) and paste it.
+    3. `POST /documents` to upload a file, then try versions, sharing, public links and trash.
+
+    ### Conventions
+    * Base path `/api/v1`. All bodies are JSON except file uploads (`multipart/form-data`, field name `file`).
+    * Errors always look like `{ "error": { "code", "message", "details?", "requestId" } }`.
+      Quote the `requestId` when reporting a problem — it matches the server log line.
+    * A document you have no access to returns **404** (not 403) so its existence is not revealed.
+    * Lists are paginated: `?page=1&limit=20` (max 100) and return `{ data, meta }`.
+    * Permissions: **owner** (everything) › **editor** (edit metadata, add versions, read activity) › **viewer** (read + download).
+  license:
+    name: MIT
+servers:
+  - url: /api/v1
+    description: This server
+tags:
+  - name: Auth
+    description: Registration, login and the current user
+  - name: Documents
+    description: Upload, list, search, edit and download documents
+  - name: Versions
+    description: Version history of a document
+  - name: Sharing
+    description: Share with users or via expiring public links
+  - name: Trash
+    description: Soft delete, restore and permanent delete
+  - name: Public
+    description: Anonymous access through a public link token
+  - name: Admin
+    description: Operational endpoints (administrator role only)
+  - name: System
+    description: Health check
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Create an account
+      description: Returns a JWT so the client is signed in immediately. Rate limited per IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+            example: { name: Ada Lovelace, email: ada@example.com, password: Str0ngPassw0rd }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: Email already registered (`EMAIL_TAKEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            example: { email: ada@example.com, password: Str0ngPassw0rd }
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: Wrong email or password (`INVALID_CREDENTIALS`). The message never says which one was wrong.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user and storage usage
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The authenticated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  usage: { $ref: '#/components/schemas/Usage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /documents:
+    post:
+      tags: [Documents]
+      summary: Upload a new document (creates version 1)
+      description: |
+        Send `multipart/form-data`. The file type must be on the allow-list and its **content must match
+        its declared type** (magic-number check). Allowed: PDF, PNG, JPEG, GIF, WebP, ZIP, DOC/DOCX,
+        XLS/XLSX, PPT/PPTX, TXT, MD, CSV, JSON. HTML/SVG/executables are rejected on purpose.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                title: { type: string, maxLength: 200, description: Defaults to the filename without extension }
+                description: { type: string, maxLength: 2000 }
+                tags: { type: string, description: 'Comma separated, max 10 (e.g. `invoice,2026`)' }
+      responses:
+        '201':
+          description: Document created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: '#/components/schemas/Document' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413':
+          description: File too large (`FILE_TOO_LARGE`) or storage quota exceeded (`QUOTA_EXCEEDED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415':
+          description: File type not allowed (`UNSUPPORTED_FILE_TYPE`) or content does not match the type (`FILE_CONTENT_MISMATCH`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [Documents]
+      summary: List and search documents
+      description: Returns documents you own or that were shared with you (see `scope`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: scope
+          in: query
+          schema: { type: string, enum: [all, owned, shared, trash], default: all }
+          description: '`all` = owned + shared with me; `trash` = my trashed documents'
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 100 }
+          description: Case-insensitive substring match on title, description, tags and filename
+        - name: tag
+          in: query
+          schema: { type: string }
+        - name: mimeType
+          in: query
+          schema: { type: string }
+          description: 'Exact MIME type of the current version, e.g. `application/pdf`. Leave empty for no filter.'
+        - name: sort
+          in: query
+          schema: { type: string, enum: [updatedAt, createdAt, title, size], default: updatedAt }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: A page of documents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Document' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /documents/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+    get:
+      tags: [Documents]
+      summary: Get one document
+      description: Owners additionally receive `sharedWith` and `publicLink` details.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: '#/components/schemas/Document' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Documents]
+      summary: Edit title, description or tags
+      description: Requires **editor** access or higher. Send at least one field.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateDocumentRequest' }
+            example: { title: Invoice March, tags: [invoice, '2026'] }
+      responses:
+        '200':
+          description: Updated document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: '#/components/schemas/Document' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Trash]
+      summary: Move to trash (soft delete)
+      description: Owner only. The document (and every version) stays recoverable until it is purged (see `TRASH_RETENTION_DAYS`).
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Moved to trash }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /documents/{id}/restore:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+    post:
+      tags: [Trash]
+      summary: Restore from trash
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Restored document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: '#/components/schemas/Document' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Document is not in the trash (`NOT_IN_TRASH`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /documents/{id}/permanent:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+    delete:
+      tags: [Trash]
+      summary: Permanently delete (irreversible)
+      description: Only allowed for documents already in the trash. Removes the record and every stored version.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Permanently deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Document is not in the trash (`NOT_IN_TRASH`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /documents/{id}/versions:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+    get:
+      tags: [Versions]
+      summary: List versions (newest first)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Version history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/Version' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Versions]
+      summary: Upload a new version
+      description: |
+        Requires **editor** access. Rejected with `DUPLICATE_VERSION` (409) if the file is byte-identical
+        to the current version (SHA-256 comparison). Only the newest `MAX_VERSIONS_PER_DOCUMENT` versions
+        are retained; older ones are pruned automatically.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                comment: { type: string, maxLength: 500, description: What changed in this version }
+      responses:
+        '201':
+          description: Version added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: '#/components/schemas/Document' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Identical to current version (`DUPLICATE_VERSION`) or concurrent edit (`CONCURRENT_MODIFICATION`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: File too large or quota exceeded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415':
+          description: File type not allowed or content mismatch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /documents/{id}/download:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+    get:
+      tags: [Versions]
+      summary: Download a version
+      description: Streams the file as an attachment. Defaults to the current version.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: version
+          in: query
+          schema: { type: integer, minimum: 1 }
+          description: Version number (default = current)
+      responses:
+        '200':
+          description: File bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /documents/{id}/shares:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+    post:
+      tags: [Sharing]
+      summary: Share with a user (or change their permission)
+      description: Owner only. The target must already have an account. Calling again for the same user updates the permission.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ShareRequest' }
+            example: { email: grace@example.com, permission: editor }
+      responses:
+        '201':
+          description: Shared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: '#/components/schemas/Document' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /documents/{id}/shares/{userId}:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-f0-9]{24}$' }
+    delete:
+      tags: [Sharing]
+      summary: Stop sharing with a user
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Updated document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: '#/components/schemas/Document' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /documents/{id}/public-link:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+    post:
+      tags: [Sharing]
+      summary: Create an expiring public download link
+      description: |
+        Owner only. Anyone with the link can download the **current** version until it expires or is revoked.
+        The token is returned **once**; only its hash is stored. Creating a new link replaces the old one.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicLinkRequest' }
+            example: { expiresInHours: 24 }
+      responses:
+        '201':
+          description: Link created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicLink' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Sharing]
+      summary: Revoke the public link
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /documents/{id}/activity:
+    parameters:
+      - { $ref: '#/components/parameters/DocumentId' }
+    get:
+      tags: [Documents]
+      summary: Audit trail for a document
+      description: Requires **editor** access or higher. Newest first.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Activity entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  activity:
+                    type: array
+                    items: { $ref: '#/components/schemas/Activity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /public/{token}:
+    get:
+      tags: [Public]
+      summary: Public link details (no authentication)
+      parameters:
+        - { $ref: '#/components/parameters/Token' }
+      responses:
+        '200':
+          description: File details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title: { type: string }
+                  filename: { type: string }
+                  mimeType: { type: string }
+                  size: { type: integer }
+                  updatedAt: { type: string, format: date-time }
+                  expiresAt: { type: string, format: date-time }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: Link expired (`LINK_EXPIRED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /public/{token}/download:
+    get:
+      tags: [Public]
+      summary: Download through a public link (no authentication)
+      parameters:
+        - { $ref: '#/components/parameters/Token' }
+      responses:
+        '200':
+          description: File bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: Link expired (`LINK_EXPIRED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /admin/stats:
+    get:
+      tags: [Admin]
+      summary: System statistics
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Totals and configured limits
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminStats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List accounts with storage usage
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: A page of users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - { $ref: '#/components/schemas/User' }
+                        - type: object
+                          properties:
+                            usage: { $ref: '#/components/schemas/Usage' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/purge-trash:
+    post:
+      tags: [Admin]
+      summary: Purge documents that exceeded the trash retention window
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Number of purged documents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purged: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /config:
+    get:
+      tags: [System]
+      summary: Public settings used by the web UI
+      description: Upload limits, allowed file types and (when configured) the demo account's credentials for portfolio visitors.
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  maxFileBytes: { type: integer }
+                  userQuotaBytes: { type: integer }
+                  maxVersionsPerDocument: { type: integer }
+                  trashRetentionDays: { type: integer }
+                  allowedMimeTypes:
+                    type: array
+                    items: { type: string }
+                  demo:
+                    type: object
+                    nullable: true
+                    properties:
+                      email: { type: string }
+                      password: { type: string }
+
+  /health:
+    servers:
+      - url: /
+    get:
+      tags: [System]
+      summary: Health check
+      description: Pings MongoDB. Point an uptime monitor here to keep a free host awake. Returns 503 when the database is unreachable.
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: Database unreachable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    DocumentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-f0-9]{24}$' }
+      description: Document id
+    Token:
+      name: token
+      in: path
+      required: true
+      schema: { type: string }
+      description: Public link token
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+  responses:
+    ValidationError:
+      description: Request validation failed (`VALIDATION_ERROR`). `details` lists each problem.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Request validation failed
+              details: [{ in: body, path: email, message: Must be a valid email address }]
+              requestId: 5f0f3c6e-7d1e-4a52-9b0e-6f5d2a7d9c11
+    Unauthorized:
+      description: Missing, invalid or expired token (`UNAUTHORIZED`, `INVALID_TOKEN`, `TOKEN_EXPIRED`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: You can see this resource but lack the required permission (`INSUFFICIENT_PERMISSION`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Not found, or you have no access to it
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests (`RATE_LIMITED`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: DOCUMENT_NOT_FOUND }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  in: { type: string, example: body }
+                  path: { type: string, example: email }
+                  message: { type: string }
+            requestId: { type: string, format: uuid }
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+        email: { type: string, format: email }
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          description: At least 8 characters with a letter and a number
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [user, admin] }
+        createdAt: { type: string, format: date-time }
+    AuthResponse:
+      type: object
+      properties:
+        token: { type: string, description: JWT (HS256). Send as `Authorization Bearer <token>` }
+        user: { $ref: '#/components/schemas/User' }
+    Usage:
+      type: object
+      properties:
+        usedBytes: { type: integer }
+        files: { type: integer, description: Stored file versions }
+        quotaBytes: { type: integer }
+    UserRef:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+    LatestVersion:
+      type: object
+      nullable: true
+      properties:
+        version: { type: integer }
+        filename: { type: string }
+        mimeType: { type: string }
+        size: { type: integer }
+        checksum: { type: string, description: SHA-256 hex }
+        uploadedAt: { type: string, format: date-time }
+    Document:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        owner: { $ref: '#/components/schemas/UserRef' }
+        permission:
+          type: string
+          enum: [owner, editor, viewer]
+          description: Your access level on this document
+        latest: { $ref: '#/components/schemas/LatestVersion' }
+        currentVersion: { type: integer }
+        versionCount: { type: integer }
+        sharedWithCount: { type: integer }
+        sharedWith:
+          type: array
+          description: Owner only, single-document responses only
+          items:
+            type: object
+            properties:
+              user: { $ref: '#/components/schemas/UserRef' }
+              permission: { type: string, enum: [viewer, editor] }
+              sharedAt: { type: string, format: date-time }
+        publicLink:
+          type: object
+          nullable: true
+          description: Owner only
+          properties:
+            expiresAt: { type: string, format: date-time }
+            expired: { type: boolean }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    UpdateDocumentRequest:
+      type: object
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        tags:
+          type: array
+          maxItems: 10
+          items: { type: string, maxLength: 30 }
+    Version:
+      type: object
+      properties:
+        version: { type: integer }
+        filename: { type: string }
+        mimeType: { type: string }
+        size: { type: integer }
+        checksum: { type: string }
+        comment: { type: string }
+        uploadedBy: { $ref: '#/components/schemas/UserRef' }
+        uploadedAt: { type: string, format: date-time }
+        isCurrent: { type: boolean }
+    ShareRequest:
+      type: object
+      required: [email, permission]
+      properties:
+        email: { type: string, format: email }
+        permission: { type: string, enum: [viewer, editor] }
+    PublicLinkRequest:
+      type: object
+      properties:
+        expiresInHours: { type: integer, minimum: 1, maximum: 720, default: 24 }
+    PublicLink:
+      type: object
+      properties:
+        token: { type: string, description: Shown only once }
+        expiresAt: { type: string, format: date-time }
+        path: { type: string, example: /api/v1/public/<token>/download }
+    Activity:
+      type: object
+      properties:
+        id: { type: string }
+        action:
+          type: string
+          example: document.version_added
+        actor:
+          allOf:
+            - { $ref: '#/components/schemas/UserRef' }
+          nullable: true
+        meta: { type: object, nullable: true, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+        totalPages: { type: integer }
+    AdminStats:
+      type: object
+      properties:
+        users: { type: integer }
+        documents: { type: integer }
+        trashed: { type: integer }
+        versions: { type: integer }
+        storageBytes: { type: integer }
+        limits:
+          type: object
+          properties:
+            maxFileBytes: { type: integer }
+            userQuotaBytes: { type: integer }
+            maxVersionsPerDocument: { type: integer }
+            trashRetentionDays: { type: integer }
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        db: { type: string, enum: [up, down] }
+        version: { type: string }
+        uptimeSeconds: { type: integer }
+        timestamp: { type: string, format: date-time }
