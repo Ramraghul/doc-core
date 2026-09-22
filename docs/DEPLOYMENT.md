@@ -193,6 +193,55 @@ docker run -p 3000:3000 \
 Same environment variables everywhere (see the README table). Hosts with a comparable free option include
 [Koyeb](https://www.koyeb.com) (Docker or Git deploy); check each provider’s *current* free terms before choosing.
 
+## Alternative: Vercel
+
+Render is the recommended path above — it's what this project is built and tested around, and it has no request-body
+size cap or execution-time limit to design around. **Vercel works too**, but only because the app is adapted for it:
+Vercel runs Node apps as **serverless functions**, not a long-running process, which this app's default shape
+(`src/server.js`) is not. That adaptation lives in [`api/index.js`](../api/index.js) and [`vercel.json`](../vercel.json)
+— read the comments in `api/index.js` for exactly what it does differently. Know the trade-offs before choosing this
+path:
+
+| | Render (recommended) | Vercel |
+| --- | --- | --- |
+| Request body / upload size | up to `MAX_FILE_SIZE_MB` (set to whatever you configure) | **hard-capped by the platform** at a few MB for serverless functions — check [Vercel's current limits](https://vercel.com/docs/functions/limitations) and set `MAX_FILE_SIZE_MB` comfortably under it (e.g. `4`) |
+| Execution time per request | none (long-lived process) | capped per plan; `vercel.json` requests `maxDuration: 30`, but your plan may cap it lower — check current limits |
+| MongoDB connections | one persistent connection | one pool **per warm container**, possibly several concurrently; `maxPoolSize` is kept small automatically (see `src/config/db.js`) to protect Atlas M0's 500-connection cap, but a traffic spike could still exhaust it |
+| Background trash purge | in-process timer (`src/server.js`) | no persistent process to host a timer — instead `GET /api/v1/internal/purge-trash`, guarded by a shared secret, triggered by Vercel Cron Jobs (plan-dependent — see below) or the bundled GitHub Actions fallback |
+| Cold starts | Free instance sleeps after 15 min idle (~1 min to wake) | Functions cold-start too; typically faster, but state (like the cached DB connection) resets every cold start |
+
+**Setup:**
+
+1. Do Step 1 (MongoDB Atlas) exactly as above.
+2. Push the repo to GitHub (Step 2).
+3. In the [Vercel dashboard](https://vercel.com/new), import the repo. Vercel auto-detects `api/index.js` as a
+   serverless function via `vercel.json`; no build command is needed for this project.
+4. Set environment variables (Project → Settings → Environment Variables):
+
+   | Key | Value |
+   | --- | --- |
+   | `MONGODB_URI` | your Atlas connection string |
+   | `JWT_SECRET` | 48+ random chars |
+   | `CRON_SECRET` | 32+ random chars — enables `GET /api/v1/internal/purge-trash` (leave unset and it stays disabled, returning 503) |
+   | `MAX_FILE_SIZE_MB` | `4` (stay safely under Vercel's request-body cap — see the table above) |
+   | `ADMIN_EMAIL` / `ADMIN_PASSWORD`, `DEMO_EMAIL` / `DEMO_PASSWORD` | optional, same as Render |
+
+5. Deploy. Verify the same way as Step 4 above (`/health`, `/`, `/api-docs`) on your `*.vercel.app` URL.
+6. **Trash purge scheduling** — pick one (or both, it's idempotent):
+   - Vercel Cron Jobs: `vercel.json` already declares one (`0 3 * * *`, daily). Availability and minimum interval
+     depend on your Vercel plan — check [Vercel's current Cron Jobs limits](https://vercel.com/docs/cron-jobs/usage-and-pricing).
+   - GitHub Actions fallback (works on any plan): [`.github/workflows/vercel-purge-trash.yml`](../.github/workflows/vercel-purge-trash.yml)
+     — set the `APP_URL` repo variable and `CRON_SECRET` repo secret as the workflow comments describe.
+
+**What I verified without a real Vercel account:** `api/index.js` invoked directly as Vercel invokes it — a raw
+`(req, res)` handler, `NODE_ENV=production`, `VERCEL=1` — serving the UI, Swagger, a full register → upload → download
+flow, the cron endpoint (correct/incorrect secret), 15 concurrent requests against one shared connection, and a
+simulated database outage returning a clean `503` instead of crashing the invocation. **What I could not verify from
+here:** an actual Vercel deployment — the real cold-start/concurrency behavior of their platform, whether
+`includeFiles` correctly bundles `public/` and `src/docs/openapi.yaml` into the function (locally those files are just
+present on disk regardless, so this specific step is untested), and Vercel Cron Jobs actually firing. Confirm these
+after your first deploy.
+
 ## Troubleshooting
 
 | Symptom | Likely cause → fix |
@@ -205,3 +254,7 @@ Same environment variables everywhere (see the README table). Hosts with a compa
 | 429 `RATE_LIMITED` | 20 login/register attempts or 300 requests per 15 min per IP; wait, or raise the limits in `src/config/env.js`. |
 | Service “suspended” mid-month | Free instance-hours (750/month per workspace) exhausted — usually another free service in the same workspace. |
 | A user reports an error | Ask for the `requestId` in the error JSON and search it in Render → Logs. |
+| Vercel: `Invalid export found in module "api/index.js"` | You're on an older version of this repo — `api/index.js` must default-export a `(req, res)` function (it does now; redeploy from `main`). |
+| Vercel: uploads fail with a platform-level 413 (not our JSON error) | Over Vercel's request-body cap, not `MAX_FILE_SIZE_MB` — lower `MAX_FILE_SIZE_MB` further, the file was rejected before reaching our code. |
+| Vercel: `/api/v1/internal/purge-trash` returns 503 `CRON_NOT_CONFIGURED` | `CRON_SECRET` isn't set in Vercel's environment variables. |
+| Vercel: trash never gets purged automatically | Check whether your plan actually runs the `vercel.json` cron (see the Vercel section above), or set up the GitHub Actions fallback. |

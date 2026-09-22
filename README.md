@@ -5,12 +5,13 @@ expiring public link, search, recover from the trash, and audit everything — b
 web UI, and a test suite you can read like a spec.
 
 Built with **Node.js 22 · Express 5 · MongoDB (GridFS) · JWT · Zod · Swagger/OpenAPI 3 · Jest**.
-Designed to run **free, indefinitely** on Render + MongoDB Atlas (see [Deployment](docs/DEPLOYMENT.md)).
+Designed to run **free, indefinitely** on Render + MongoDB Atlas (recommended), with an adapted path for Vercel
+serverless functions too (see [Deployment](docs/DEPLOYMENT.md)).
 
 | | |
 | --- | --- |
 | **Live demo** | `https://<your-service>.onrender.com` &nbsp;·&nbsp; UI at `/` &nbsp;·&nbsp; Swagger at `/api-docs` &nbsp;·&nbsp; health at `/health` |
-| **Tests** | 157 automated checks (147 documented cases) · ~96 % statement coverage — [test-case matrix](docs/TEST_CASES.md) |
+| **Tests** | 166 automated checks (156 documented cases) · ~96 % statement coverage — [test-case matrix](docs/TEST_CASES.md) |
 | **Docs** | [Architecture](docs/ARCHITECTURE.md) · [Deployment](docs/DEPLOYMENT.md) · [Testing](docs/TESTING.md) · [API spec](src/docs/openapi.yaml) |
 
 > Replace the demo URL above after you deploy. The API, UI, Swagger docs and production-mode startup were all
@@ -135,6 +136,7 @@ Copy [`.env.example`](.env.example) for local development. On a host, set them i
 | `CORS_ORIGINS` | *(empty = same-origin only)* | Comma-separated allowed browser origins |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | – | Create/promote an admin on startup |
 | `DEMO_EMAIL` / `DEMO_PASSWORD` | – | Create a public demo account with sample docs |
+| `CRON_SECRET` | – | Vercel deployments only — enables `GET /api/v1/internal/purge-trash` (see [docs/DEPLOYMENT.md#alternative-vercel](docs/DEPLOYMENT.md#alternative-vercel)) |
 | `PORT` · `LOG_LEVEL` · `NODE_ENV` | `3000` · `info` · `development` | Runtime |
 
 ## Project structure
@@ -153,15 +155,16 @@ src/
   utils/               ApiError, file-type sniffing, streaming download, pagination, logger
   docs/                openapi.yaml + Swagger UI mount
 public/                Dependency-free web UI (index.html, app.js, styles.css)
+api/index.js           Vercel serverless entrypoint (wraps the same app; see docs/DEPLOYMENT.md#vercel)
 tests/                 unit/ + integration/ (real Express app, real MongoDB) + helpers/
 docs/                  ARCHITECTURE · DEPLOYMENT · TESTING · TEST_CASES (generated)
-Dockerfile · render.yaml · .github/workflows/   Deploy + CI
+Dockerfile · render.yaml · vercel.json · .github/workflows/   Deploy + CI
 ```
 
 ## Testing
 
 ```bash
-npm test                 # 157 checks, ~10 s (spins up a throw-away MongoDB automatically)
+npm test                 # 166 checks, ~10 s (spins up a throw-away MongoDB automatically)
 npm run test:coverage    # + coverage report and threshold gate
 npm run lint
 npm run docs:tests       # regenerate docs/TEST_CASES.md from the test titles
@@ -176,7 +179,8 @@ and the OpenAPI document itself. Details: [docs/TESTING.md](docs/TESTING.md) · 
 **Render** (web service) + **MongoDB Atlas M0** (database *and* file storage via GridFS) — no credit card, no expiry
 on either free tier. Step-by-step instructions, keep-alive setup and honest caveats about what
 “free forever” does and doesn’t guarantee: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. A `Dockerfile` is included
-for any other container host.
+for any other container host, and an adapted **Vercel** path (`api/index.js`, `vercel.json`) is documented with its
+trade-offs (upload-size cap, execution limits, connection pooling) in [docs/DEPLOYMENT.md#alternative-vercel](docs/DEPLOYMENT.md#alternative-vercel).
 
 ## Security highlights
 

@@ -27,6 +27,9 @@ const schema = z.object({
   DEMO_EMAIL: z.string().optional(),
   DEMO_PASSWORD: z.string().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  // Shared secret for the unauthenticated cron endpoint (see api/index.js and docs/DEPLOYMENT.md#vercel).
+  // Vercel Cron Jobs send it automatically as `Authorization: Bearer <value>` when this env var is set.
+  CRON_SECRET: z.string().optional(),
 });
 
 // Empty strings in .env (e.g. `CORS_ORIGINS=`) should behave like "not set".
@@ -39,6 +42,10 @@ if (!parsed.success) {
 const env = parsed.data;
 const isProd = env.NODE_ENV === 'production';
 const isTest = env.NODE_ENV === 'test';
+// Vercel sets VERCEL=1 for every deployment (and VERCEL_ENV for preview/production); this is the
+// platform's own documented way to detect the runtime, used to tune the DB pool size and other
+// serverless-specific behaviour (see config/db.js and api/index.js).
+const isServerless = process.env.VERCEL === '1';
 
 if (isProd && (!env.JWT_SECRET || env.JWT_SECRET.length < 32)) {
   throw new Error('JWT_SECRET must be set to a random string of at least 32 characters in production.');
@@ -49,6 +56,7 @@ module.exports = {
   env: env.NODE_ENV,
   isProd,
   isTest,
+  isServerless,
   port: env.PORT,
   mongoUri: env.MONGODB_URI,
   jwt: { secret: env.JWT_SECRET || DEV_SECRET, expiresIn: env.JWT_EXPIRES_IN, issuer: 'docucore' },
@@ -60,6 +68,7 @@ module.exports = {
   corsOrigins: env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),
   admin: { email: env.ADMIN_EMAIL, password: env.ADMIN_PASSWORD },
   demo: { email: env.DEMO_EMAIL, password: env.DEMO_PASSWORD },
+  cronSecret: env.CRON_SECRET,
   logLevel: isTest ? 'silent' : env.LOG_LEVEL,
   rateLimit: {
     enabled: !isTest,

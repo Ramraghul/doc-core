@@ -1,0 +1,25 @@
+# Fallback/alternative to vercel.json's `crons` entry: Vercel's own Cron Jobs feature has plan-specific
+# limits (availability and minimum interval vary by plan — check Vercel's current pricing page), so this
+# workflow calls the same secret-guarded endpoint from GitHub Actions instead, which works on any plan.
+# Use one or the other (or both — the endpoint is idempotent).
+#
+# Setup: repo Settings > Secrets and variables > Actions
+#   Variables > APP_URL      = https://your-app.vercel.app
+#   Secrets   > CRON_SECRET  = the same value set as the CRON_SECRET env var in Vercel
+name: Purge expired trash (Vercel)
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  purge:
+    if: ${{ vars.APP_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the internal purge-trash endpoint
+        run: |
+          curl -fsS --retry 3 --retry-delay 10 --max-time 30 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ vars.APP_URL }}/api/v1/internal/purge-trash"

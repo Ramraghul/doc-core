@@ -1,0 +1,11 @@
+tests
+docs
+coverage
+.env
+.git
+.github
+scripts
+*.md
+Dockerfile
+render.yaml
+.claude

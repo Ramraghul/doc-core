@@ -1,6 +1,6 @@
 # Testing
 
-157 automated checks (147 documented cases — the `it.each` ones expand to several runs) run in about 10 seconds.
+166 automated checks (156 documented cases — the `it.each` ones expand to several runs) run in about 10 seconds.
 The complete list, generated from the test titles, is in **[TEST_CASES.md](TEST_CASES.md)**.
 
 ## Run them
@@ -55,7 +55,8 @@ Guiding principles:
 | Trash | 9 | soft delete, collaborator invisibility, two-step permanent delete, quota release, purge by age, audit outlives document |
 | Limits | 6 | max file size, per-user quota, quota charged to owner for editors’ uploads, JSON body cap |
 | Admin & bootstrap | 7 | stats/users, 403 for non-admins, no implicit document access, idempotent admin/demo seeding |
-| System | 15 | health (ok/503), JSON 404, request-ids, security headers, generic 500, CORS, rate limiting, OpenAPI validity, Swagger “Try it out” has no hidden filters, static UI, `/config` |
+| System | 19 | health (ok/503), JSON 404, request-ids, security headers, generic 500, CORS, rate limiting, OpenAPI validity, Swagger “Try it out” has no hidden filters, static UI, `/config`, DB connection reuse across invocations |
+| Cron / scheduler endpoint | 5 | disabled without a secret configured, rejects missing/wrong secret, works with no user JWT, actually purges, unaffected by other middleware |
 | Unit | 38 | see [TEST_CASES.md](TEST_CASES.md) |
 
 Coverage at the time of writing: **96 % statements · 86 % branches · 95 % functions · 98 % lines**. `jest.config.js` enforces
