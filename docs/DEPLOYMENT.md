@@ -239,15 +239,24 @@ flow, the cron endpoint (correct/incorrect secret), 15 concurrent requests again
 simulated database outage returning a clean `503` instead of crashing the invocation. `vercel.json` itself was checked
 field-by-field against Vercel's own published JSON schema.
 
-**What that couldn't catch, and did in fact break on a real deploy:** an unanchored pattern in `.vercelignore`
-(`docs` instead of `/docs`) silently excluded `src/docs/swagger.js` — a file the app genuinely needs — from what gets
-*uploaded* to Vercel in the first place. Every local check reads files straight off disk and has no concept of
-`.vercelignore` at all, so this class of bug is invisible to that kind of verification by construction; it only
-surfaced as a runtime `Cannot find module` after a real deploy. It's fixed now (every entry is anchored) and I
-verified the fix by checking every file under `src/`, `public/`, and `api/` against the corrected `.vercelignore`
-with `git check-ignore` (which implements the same pattern semantics) — none are excluded. **Still genuinely
-unverified from here:** the real cold-start/concurrency behavior of Vercel's platform, and Vercel Cron Jobs actually
-firing. Confirm those after your next deploy.
+**What that couldn't catch, and did in fact break on a real deploy — twice, for two unrelated reasons:**
+
+1. An unanchored pattern in `.vercelignore` (`docs` instead of `/docs`) silently excluded `src/docs/swagger.js` — a
+   file the app genuinely needs — from what gets *uploaded* to Vercel in the first place. Every local check reads
+   files straight off disk and has no concept of `.vercelignore` at all, so this class of bug is invisible to that
+   kind of verification by construction. Fixed (every entry anchored) and confirmed with `git check-ignore` against
+   every file under `src/`, `public/`, and `api/` — none are excluded.
+2. Vercel auto-detected an **Express Framework Preset** from `package.json` and loaded `src/app.js` directly,
+   bypassing `vercel.json`'s `functions`/`rewrites` config entirely (a framework preset always takes precedence over
+   file-based function config — a platform build-pipeline decision, not something that runs, or can be reproduced,
+   on a local machine at all). Fixed with `"framework": null` in `vercel.json` (schema-validated: `null` is a
+   documented valid value, explicitly disables preset auto-detection).
+
+Both fixes are code-level (live in the repo, not a dashboard setting you have to remember), and I re-validated the
+full `vercel.json` against Vercel's schema after each change. **Still genuinely unverified from here:** the real
+cold-start/concurrency behavior of Vercel's platform, and Vercel Cron Jobs actually firing. Confirm those after your
+next deploy — and if `src/app.js`'s export error reappears a third time, check Project Settings → General →
+**Framework Preset** shows "Other" in the dashboard as a manual backstop.
 
 ## Troubleshooting
 
@@ -264,6 +273,7 @@ firing. Confirm those after your next deploy.
 | Vercel: `Invalid export found in module "api/index.js"` | You're on an older version of this repo — `api/index.js` must default-export a `(req, res)` function (it does now; redeploy from `main`). |
 | Vercel: build fails, `functions.api/index.js.includeFiles should be string` | Older version of the repo — `includeFiles` must be one glob string, not an array (fixed in `vercel.json`; redeploy from `main`). |
 | Vercel: build succeeds but every request 500s, logs show `Cannot find module './docs/swagger'` (or any other file under `src/`) | An unanchored pattern in `.vercelignore` (e.g. `docs` instead of `/docs`) matches at *any* depth, not just the root, and silently excluded a file the app needs from the upload. Anchor every `.vercelignore` entry with a leading `/` unless you deliberately want it to match everywhere. |
+| Vercel: `Invalid export found in module "/var/task/src/app.js"` **even though `api/index.js` exists and is correct** | Vercel auto-detected an **Express Framework Preset** (it sees `express` in `package.json` and a file that looks like a conventional entrypoint) and that preset loads `src/app.js` directly, completely bypassing `vercel.json`'s `functions`/`rewrites` — a framework preset always takes precedence over file-based function config. Fixed by `"framework": null` in `vercel.json` (forces "Other", already in this repo). If it recurs, also check Project Settings → General → **Framework Preset** shows "Other" in the dashboard. |
 | Vercel: uploads fail with a platform-level 413 (not our JSON error) | Over Vercel's request-body cap, not `MAX_FILE_SIZE_MB` — lower `MAX_FILE_SIZE_MB` further, the file was rejected before reaching our code. |
 | Vercel: `/api/v1/internal/purge-trash` returns 503 `CRON_NOT_CONFIGURED` | `CRON_SECRET` isn't set in Vercel's environment variables. |
 | Vercel: trash never gets purged automatically | Check whether your plan actually runs the `vercel.json` cron (see the Vercel section above), or set up the GitHub Actions fallback. |
