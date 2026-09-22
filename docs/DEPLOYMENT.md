@@ -236,11 +236,18 @@ path:
 **What I verified without a real Vercel account:** `api/index.js` invoked directly as Vercel invokes it — a raw
 `(req, res)` handler, `NODE_ENV=production`, `VERCEL=1` — serving the UI, Swagger, a full register → upload → download
 flow, the cron endpoint (correct/incorrect secret), 15 concurrent requests against one shared connection, and a
-simulated database outage returning a clean `503` instead of crashing the invocation. **What I could not verify from
-here:** an actual Vercel deployment — the real cold-start/concurrency behavior of their platform, whether
-`includeFiles: "public/**"` correctly bundles the whole `public/` directory (which now includes `openapi.yaml`) into the function (locally those files are just
-present on disk regardless, so this specific step is untested), and Vercel Cron Jobs actually firing. Confirm these
-after your first deploy.
+simulated database outage returning a clean `503` instead of crashing the invocation. `vercel.json` itself was checked
+field-by-field against Vercel's own published JSON schema.
+
+**What that couldn't catch, and did in fact break on a real deploy:** an unanchored pattern in `.vercelignore`
+(`docs` instead of `/docs`) silently excluded `src/docs/swagger.js` — a file the app genuinely needs — from what gets
+*uploaded* to Vercel in the first place. Every local check reads files straight off disk and has no concept of
+`.vercelignore` at all, so this class of bug is invisible to that kind of verification by construction; it only
+surfaced as a runtime `Cannot find module` after a real deploy. It's fixed now (every entry is anchored) and I
+verified the fix by checking every file under `src/`, `public/`, and `api/` against the corrected `.vercelignore`
+with `git check-ignore` (which implements the same pattern semantics) — none are excluded. **Still genuinely
+unverified from here:** the real cold-start/concurrency behavior of Vercel's platform, and Vercel Cron Jobs actually
+firing. Confirm those after your next deploy.
 
 ## Troubleshooting
 
@@ -255,6 +262,8 @@ after your first deploy.
 | Service “suspended” mid-month | Free instance-hours (750/month per workspace) exhausted — usually another free service in the same workspace. |
 | A user reports an error | Ask for the `requestId` in the error JSON and search it in Render → Logs. |
 | Vercel: `Invalid export found in module "api/index.js"` | You're on an older version of this repo — `api/index.js` must default-export a `(req, res)` function (it does now; redeploy from `main`). |
+| Vercel: build fails, `functions.api/index.js.includeFiles should be string` | Older version of the repo — `includeFiles` must be one glob string, not an array (fixed in `vercel.json`; redeploy from `main`). |
+| Vercel: build succeeds but every request 500s, logs show `Cannot find module './docs/swagger'` (or any other file under `src/`) | An unanchored pattern in `.vercelignore` (e.g. `docs` instead of `/docs`) matches at *any* depth, not just the root, and silently excluded a file the app needs from the upload. Anchor every `.vercelignore` entry with a leading `/` unless you deliberately want it to match everywhere. |
 | Vercel: uploads fail with a platform-level 413 (not our JSON error) | Over Vercel's request-body cap, not `MAX_FILE_SIZE_MB` — lower `MAX_FILE_SIZE_MB` further, the file was rejected before reaching our code. |
 | Vercel: `/api/v1/internal/purge-trash` returns 503 `CRON_NOT_CONFIGURED` | `CRON_SECRET` isn't set in Vercel's environment variables. |
 | Vercel: trash never gets purged automatically | Check whether your plan actually runs the `vercel.json` cron (see the Vercel section above), or set up the GitHub Actions fallback. |

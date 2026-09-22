@@ -1,11 +1,15 @@
-tests
-docs
-coverage
-.env
-.git
-.github
-scripts
-*.md
-Dockerfile
-render.yaml
-.claude
+# Leading slashes anchor these to the project root. Without one, ignore patterns match at ANY depth
+# (gitignore semantics) — an earlier unanchored `docs` here also matched src/docs/ and excluded
+# swagger.js, a real module src/app.js requires, causing "Cannot find module './docs/swagger'" at
+# runtime even though the build itself succeeded. Keep every entry below anchored.
+/tests
+/docs
+/coverage
+/.env
+/.git
+/.github
+/scripts
+/*.md
+/Dockerfile
+/render.yaml
+/.claude
