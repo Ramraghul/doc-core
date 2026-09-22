@@ -4,7 +4,10 @@ const YAML = require('yaml');
 const swaggerUi = require('swagger-ui-express');
 const { Router } = require('express');
 
-const specPath = path.join(__dirname, 'openapi.yaml');
+// Lives in public/ (not alongside this loader) so a single plain glob — "public/**" in vercel.json's
+// `includeFiles` — is enough to bundle it for the Vercel deployment; express.static also happens to
+// serve it directly at GET /openapi.yaml as a side effect, which is harmless (it isn't secret).
+const specPath = path.join(__dirname, '..', '..', 'public', 'openapi.yaml');
 
 /** Loaded once at startup. The OpenAPI file is the single source of truth for the API contract. */
 const spec = YAML.parse(fs.readFileSync(specPath, 'utf8'));

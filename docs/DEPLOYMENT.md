@@ -238,7 +238,7 @@ path:
 flow, the cron endpoint (correct/incorrect secret), 15 concurrent requests against one shared connection, and a
 simulated database outage returning a clean `503` instead of crashing the invocation. **What I could not verify from
 here:** an actual Vercel deployment — the real cold-start/concurrency behavior of their platform, whether
-`includeFiles` correctly bundles `public/` and `src/docs/openapi.yaml` into the function (locally those files are just
+`includeFiles: "public/**"` correctly bundles the whole `public/` directory (which now includes `openapi.yaml`) into the function (locally those files are just
 present on disk regardless, so this specific step is untested), and Vercel Cron Jobs actually firing. Confirm these
 after your first deploy.
 

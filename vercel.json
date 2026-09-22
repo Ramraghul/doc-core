@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/index.js": {
-      "includeFiles": ["public/**", "src/docs/openapi.yaml"],
+      "includeFiles": "public/**",
       "maxDuration": 30
     }
   },

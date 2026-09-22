@@ -12,7 +12,7 @@ serverless functions too (see [Deployment](docs/DEPLOYMENT.md)).
 | --- | --- |
 | **Live demo** | `https://<your-service>.onrender.com` &nbsp;·&nbsp; UI at `/` &nbsp;·&nbsp; Swagger at `/api-docs` &nbsp;·&nbsp; health at `/health` |
 | **Tests** | 166 automated checks (156 documented cases) · ~96 % statement coverage — [test-case matrix](docs/TEST_CASES.md) |
-| **Docs** | [Architecture](docs/ARCHITECTURE.md) · [Deployment](docs/DEPLOYMENT.md) · [Testing](docs/TESTING.md) · [API spec](src/docs/openapi.yaml) |
+| **Docs** | [Architecture](docs/ARCHITECTURE.md) · [Deployment](docs/DEPLOYMENT.md) · [Testing](docs/TESTING.md) · [API spec](public/openapi.yaml) |
 
 > Replace the demo URL above after you deploy. The API, UI, Swagger docs and production-mode startup were all
 > exercised locally against a real MongoDB; the cloud deployment itself and the Docker image build are the parts
@@ -99,7 +99,7 @@ curl -s -X POST   $API/documents/$DOC/restore -H "authorization: Bearer $TOKEN" 
 
 ## API at a glance
 
-Base path `/api/v1` · full contract in [`src/docs/openapi.yaml`](src/docs/openapi.yaml) (browse it at `/api-docs`).
+Base path `/api/v1` · full contract in [`public/openapi.yaml`](public/openapi.yaml) (browse it at `/api-docs`).
 
 | Area | Endpoints |
 | --- | --- |
