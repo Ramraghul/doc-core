@@ -116,11 +116,41 @@ describe('System: API documentation & UI', () => {
     expect(Object.keys(api.paths).length).toBeGreaterThanOrEqual(15);
   });
 
-  it('SYS-21 serves the spec as JSON and Swagger UI at /api-docs', async () => {
+  it('SYS-21 serves the spec as JSON and Swagger UI at /api-docs (redirecting the bare path to a trailing slash)', async () => {
     const json = await request(app).get('/openapi.json').expect(200);
     expect(json.body.info.title).toBe('Docucore API');
+    const bare = await request(app).get('/api-docs').expect(301);
+    expect(bare.headers.location).toBe('/api-docs/');
     const ui = await request(app).get('/api-docs/').expect(200);
-    expect(ui.text).toContain('swagger-ui');
+    expect(ui.text).toContain('id="swagger-ui"');
+  });
+
+  it('SYS-27 Swagger UI is a hand-written page that only references its own vendored assets (never swagger-ui-dist\'s runtime-scanned defaults), and every one is servable', async () => {
+    // swagger-ui-express's swaggerUi.setup() hardcodes relative asset URLs (./swagger-ui-bundle.js etc.)
+    // in its HTML template — non-overridable, since customJs/customCssUrl only ever ADD extra tags, they
+    // don't replace the defaults (verified directly against the library's generateHTML source). Those
+    // defaults are served via express.static() scanning swagger-ui-dist's folder by filename at request
+    // time, a directory listing serverless bundlers can't predict statically, so those files silently
+    // never made it into a real Vercel deployment (confirmed live: requests to swagger-ui-bundle.js
+    // returned 200 with the Swagger *page* HTML instead of the script). Fixed by dropping
+    // swaggerUi.setup() entirely for a static page (public/api-docs/index.html) that only ever
+    // references files vendored into public/vendor/swagger-ui/, which deploy like any other public/ file.
+    const ui = await request(app).get('/api-docs/').expect(200);
+    const assetPaths = [...ui.text.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]).filter((p) => !p.startsWith('data:'));
+    expect(assetPaths.length).toBeGreaterThan(0);
+    for (const p of assetPaths) expect(p).toMatch(/^\/(vendor\/swagger-ui|api-docs)\//); // no bare relative paths, nothing external
+    expect(ui.text).not.toMatch(/<script>[\s\S]*SwaggerUIBundle/); // init logic is its own file, not inline (CSP: no 'unsafe-inline')
+
+    for (const [path, contentType] of [
+      ['/vendor/swagger-ui/swagger-ui.css', /css/],
+      ['/vendor/swagger-ui/swagger-ui-bundle.js', /javascript/],
+      ['/vendor/swagger-ui/swagger-ui-standalone-preset.js', /javascript/],
+      ['/vendor/swagger-ui/favicon-32x32.png', /image\/png/],
+      ['/api-docs/init.js', /javascript/],
+    ]) {
+      const res = await request(app).get(path).expect(200);
+      expect(res.headers['content-type']).toMatch(contentType);
+    }
   });
 
   it('SYS-22 every non-public API operation in the spec declares bearer security', async () => {

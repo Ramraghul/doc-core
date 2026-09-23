@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Docucore API</title>
+    <meta name="description" content="Docucore REST API — interactive documentation (OpenAPI 3 / Swagger UI)." />
+    <link rel="icon" type="image/png" sizes="32x32" href="/vendor/swagger-ui/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/vendor/swagger-ui/favicon-16x16.png" />
+    <link rel="stylesheet" href="/vendor/swagger-ui/swagger-ui.css" />
+    <style>
+      html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+      *, *:before, *:after { box-sizing: inherit; }
+      body { margin: 0; background: #fafafa; }
+      .swagger-ui .topbar { display: none; } /* one spec, no need for the URL switcher bar */
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <!--
+      Deliberately NOT using swagger-ui-express's built-in HTML generation (swaggerUi.setup()): its
+      template hardcodes relative asset URLs (./swagger-ui-bundle.js etc.) that swagger-ui-express serves
+      via express.static() scanning swagger-ui-dist's folder by filename at request time — a directory
+      listing serverless bundlers can't predict statically, so those files silently never made it into a
+      real Vercel deployment (confirmed live: requests returned the Swagger *page* HTML instead of the
+      script). This hand-written page only ever references files vendored into public/vendor/swagger-ui/,
+      which deploy the same way any other file under public/ does (already proven, e.g. openapi.yaml).
+      No inline <script> block, matching this project's CSP (script-src 'self', no 'unsafe-inline').
+    -->
+    <script src="/vendor/swagger-ui/swagger-ui-bundle.js"></script>
+    <script src="/vendor/swagger-ui/swagger-ui-standalone-preset.js"></script>
+    <script src="/api-docs/init.js"></script>
+  </body>
+</html>

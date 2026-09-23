@@ -2,7 +2,7 @@ const js = require('@eslint/js');
 const globals = require('globals');
 
 module.exports = [
-  { ignores: ['node_modules/', 'coverage/'] },
+  { ignores: ['node_modules/', 'coverage/', 'public/vendor/'] },
   js.configs.recommended,
   {
     files: ['**/*.js'],
@@ -16,5 +16,11 @@ module.exports = [
   {
     files: ['public/**/*.js'],
     languageOptions: { sourceType: 'script', globals: { ...globals.browser } },
+  },
+  {
+    // Defined by the vendored swagger-ui-bundle.js / swagger-ui-standalone-preset.js <script> tags
+    // loaded before this file in public/api-docs/index.html.
+    files: ['public/api-docs/init.js'],
+    languageOptions: { globals: { SwaggerUIBundle: 'readonly', SwaggerUIStandalonePreset: 'readonly' } },
   },
 ];
